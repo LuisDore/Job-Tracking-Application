@@ -17,6 +17,8 @@ import bcrypt
 #To run the server do the following in the terminal:
 #uvicorn FastAPI:app --reload
 
+#TODO Look into JWT Authentication instead of a global variable 
+
 
 logged_in_user = None #Global variable to store the logged in user's username
 
@@ -57,6 +59,15 @@ def login_user(email: str, password: str):
         return {"message": "Login successful"}
     else:
         return {"message": "Invalid email or password"}
+
+@app.post("/auth/Logout") #Logout endpoint
+def logout_user():
+    global logged_in_user
+    logged_in_user = None #Clear the logged in user
+    return {"message": "Logout successful"}
+
+
+
 
 #CRUD Endpoints for Applications
 @app.get("/") #Root endpoint
@@ -107,7 +118,7 @@ def create_application(title: str,
     db.refresh(new_application)
     db.close()
 
-    return new_application
+    return new_application and {"message": "Application created successfully."} #TODO Do i need to return the application its self as its already been stored in the database ?
 
 @app.get("/applications/{application_id}") #Gets a specific application by ID
 def read_application(application_id: int):
