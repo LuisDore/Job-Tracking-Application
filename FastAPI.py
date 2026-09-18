@@ -16,6 +16,9 @@ import models
 
 app = FastAPI.FastAPI()
 
+Base = models.Base
+Base.metadata.create_all(bind=engine)
+
 #User Authentication Endpoints
 @app.post("/auth/Register") #Register endpoint
 def register_user():

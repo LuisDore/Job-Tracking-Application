@@ -1,9 +1,9 @@
 
 from enum import Enum
-from sqlalchemy import Boolean, Column, Integer, String
+from sqlalchemy import Column, Enum as SQLAlchemyEnum, ForeignKey, Integer, String
 from DataBase import Base
 
-class StatusEnum(Enum):
+class StatusEnum(str, Enum):
     APPLIED = "Applied"
     ONLINE_ASSESSMENT = "Online Assessment"
     INTERVIEWING = "Interviewing"
@@ -30,11 +30,11 @@ class Application(Base):
     company_name = Column(String, nullable=False)
     location = Column(String, nullable=False)
     salary = Column(String, nullable=True)
-    status = Column(StatusEnum, nullable=False) 
+    status = Column(SQLAlchemyEnum(StatusEnum), nullable=False)
     date_applied = Column(String, nullable=True)  #TODO: Change to Date type if needed
     notes = Column(String, nullable=True)
     job_url = Column(String, nullable=True)
-    user_id = Column(Integer, nullable=False, foreign_key="users.user_id")  # Foreign key to the User table
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
 
 class User(Base):
     __tablename__ = "users"
