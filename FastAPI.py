@@ -1,7 +1,7 @@
 import fastapi as FastAPI
 from DataBase import SessionLocal, engine
 import models
-
+import bcrypt
 
 #Application :
 #Application ID (Integer)
@@ -14,22 +14,49 @@ import models
 #Notes (String)
 #Job URL (String)
 
-app = FastAPI.FastAPI()
+#To run the server do the following in the terminal:
+#uvicorn FastAPI:app --reload
 
-Base = models.Base
-Base.metadata.create_all(bind=engine)
+
+logged_in_user = None #Global variable to store the logged in user's username
+
+
+app = FastAPI.FastAPI() #Creates the FastAPI application instance
+
+Base = models.Base #Creates the Base class for the SQLAlchemy models
+Base.metadata.create_all(bind=engine) #Creates the database tables based on the models defined in models.py
 
 #User Authentication Endpoints
 @app.post("/auth/Register") #Register endpoint
-def register_user():
-    pass
+def register_user(new_username: str, new_email: str, password: str):
+    db = SessionLocal()
+
+    new_user = models.User(
+        user_id = db.query(models.User).count() + 1, #Auto Incrementing User ID 
+        username = new_username,
+        email = new_email,
+        hashed_password = Hash(password), 
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    db.close()
 
 @app.post("/auth/Login") #Login endpoint
-def login_user():
-    pass
-
-
-
+def login_user(email: str, password: str):
+    db = SessionLocal()
+    user = db.query(models.User).filter(models.User.email == email).first()
+    db.close()
+    #No salt is needed for bcrypt because the salt is automatically generated and stored as part 
+    #of the hashed password. When you verify a password, bcrypt extracts the salt from the stored hash and uses it to hash the provided password for comparison.
+    if user and bcrypt.checkpw(password.encode('utf-8'), user.hashed_password.encode('utf-8')): #If the user exists and the password matches the hashed password in the database
+       
+        global logged_in_user
+        logged_in_user = user #Store the logged in user
+        return {"message": "Login successful"}
+    else:
+        return {"message": "Invalid email or password"}
 
 #CRUD Endpoints for Applications
 @app.get("/") #Root endpoint
@@ -38,8 +65,12 @@ def read_root():
 
 @app.get("/applications") #Gets all applications
 def read_applications():
+
+    if logged_in_user is None: #If the user is not logged in, return an error message
+        return {"message": "User not logged in. Please log in to view applications."}
+
     db = SessionLocal()
-    applications = db.query(models.Application).all()
+    applications = db.query(models.Application).filter(models.Application.user_id == logged_in_user.user_id).all()
     db.close()
     return applications
 
@@ -51,9 +82,12 @@ def create_application(title: str,
                         status: models.StatusEnum,
                         date_applied: str, 
                         notes: str,
-                        job_url: str,
-                        user_id: int):
+                        job_url: str):
     
+    if logged_in_user is None: #If the user is not logged in, return an error message
+        return {"message": "User not logged in. Please log in to create applications."}
+
+
     db = SessionLocal()
     new_application = models.Application(
         application_id= db.query(models.Application).count() + 1,  # Auto-incrementing application_id
@@ -65,7 +99,7 @@ def create_application(title: str,
         date_applied= date_applied,
         notes= notes,
         job_url= job_url,
-        user_id= user_id
+        user_id= logged_in_user.user_id  # Use the logged-in user's ID
 
     )
     db.add(new_application)
@@ -78,8 +112,12 @@ def create_application(title: str,
 @app.get("/applications/{application_id}") #Gets a specific application by ID
 def read_application(application_id: int):
 
+    if logged_in_user is None: #If the user is not logged in, return an error message
+        return {"message": "User not logged in. Please log in to view an application."}
+
     db = SessionLocal()
-    application = db.query(models.Application).filter(models.Application.application_id == application_id).first()
+    application = db.query(models.Application).filter(models.Application.application_id == application_id, 
+                                                      models.Application.user_id == logged_in_user.user_id).first()
     db.close()
 
     return application
@@ -95,8 +133,12 @@ def update_application(application_id: int,
                        notes: str = None,
                        job_url: str = None):    
     
+    if logged_in_user is None: #If the user is not logged in, return an error message
+        return {"message": "User not logged in. Please log in to update an application."}
+
     db = SessionLocal()
-    application = db.query(models.Application).filter(models.Application.application_id == application_id).first()
+    application = db.query(models.Application).filter(models.Application.application_id == application_id, 
+                                                      models.Application.user_id == logged_in_user.user_id).first()
     
     if application:        
 
@@ -127,8 +169,12 @@ def update_application(application_id: int,
 @app.delete("/applications/{application_id}") #Deletes a specific application by ID
 def delete_application(application_id: int):
 
+    if logged_in_user is None: #If the user is not logged in, return an error message
+        return {"message": "User not logged in. Please log in to delete an application."}
+
     db = SessionLocal()
-    application = db.query(models.Application).filter(models.Application.application_id == application_id).first()
+    application = db.query(models.Application).filter(models.Application.application_id == application_id, 
+                                                      models.Application.user_id == logged_in_user.user_id).first()
     
     if application:
         db.delete(application)
@@ -141,3 +187,11 @@ def delete_application(application_id: int):
 
 
 #Buiseness Logic
+
+def Hash(password : str): #Using BCrypt to hash the password, One way hashing 
+    #A Salt is a random data fed into a one way hashing function to ensure that the output (the hash) is unique even for identical inputs (passwords).
+    #Cost is the number of rounds of hashing to apply, higher cost means more security but also more time to compute the hash.
+    cost = 12 #Cost factor, higher means more secure but slower    
+    salt = bcrypt.gensalt(rounds=cost)
+    hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt) #Hashing algorithm requires bytes, encode the password to bytes using utf-8 encoding
+    return hashed_password.decode('utf-8') #return the hashed password as a string, decode the bytes back to string using utf-8 encoding
