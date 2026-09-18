@@ -2,6 +2,10 @@ import fastapi as FastAPI
 from DataBase import SessionLocal, engine
 import models
 import bcrypt
+import jwt
+from datetime import datetime, timedelta, timezone
+import os
+
 
 #Application :
 #Application ID (Integer)
@@ -19,8 +23,10 @@ import bcrypt
 
 #TODO Look into JWT Authentication instead of a global variable 
 
-
-logged_in_user = None #Global variable to store the logged in user's username
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-this-development-secret")
+ALGORITHM = "HS256" #Symmetric Algorithm, uses the secret
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+#bearer_scheme = HTTPBearer()
 
 
 app = FastAPI.FastAPI() #Creates the FastAPI application instance
@@ -54,9 +60,27 @@ def login_user(email: str, password: str):
     #of the hashed password. When you verify a password, bcrypt extracts the salt from the stored hash and uses it to hash the provided password for comparison.
     if user and bcrypt.checkpw(password.encode('utf-8'), user.hashed_password.encode('utf-8')): #If the user exists and the password matches the hashed password in the database
        
-        global logged_in_user
-        logged_in_user = user #Store the logged in user
-        return {"message": "Login successful"}
+        #TODO Create JWT Token
+        #The JWT Token consists of HEADER.PAYLOAD.SIGNATURE
+        expire = datetime.now + timedelta(minutes= ACCESS_TOKEN_EXPIRE_MINUTES) #Creates the DateTime Variable 30 Minutes from the Current Time (BST/GMT)
+
+        jwt_payload = {
+            "sub": str(user.user_id),
+            "exp": expire            
+        }
+        
+        encoded_jwt = jwt.encode(payload=jwt_payload, 
+                                 key=SECRET_KEY, 
+                                 algorithm=ALGORITHM) 
+
+
+
+
+        #TODO Return JWT Token
+        #TODO Create get_current_user() Function
+
+       
+        return encoded_jwt and {"message": "Login successful"}
     else:
         return {"message": "Invalid email or password"}
 
@@ -118,7 +142,12 @@ def create_application(title: str,
     db.refresh(new_application)
     db.close()
 
-    return new_application and {"message": "Application created successfully."} #TODO Do i need to return the application its self as its already been stored in the database ?
+    return {
+    "message": "Application created successfully.",
+    "application_id": new_application.application_id
+    }
+
+
 
 @app.get("/applications/{application_id}") #Gets a specific application by ID
 def read_application(application_id: int):
@@ -206,3 +235,24 @@ def Hash(password : str): #Using BCrypt to hash the password, One way hashing
     salt = bcrypt.gensalt(rounds=cost)
     hashed_password = bcrypt.hashpw(password.encode('utf-8'), salt) #Hashing algorithm requires bytes, encode the password to bytes using utf-8 encoding
     return hashed_password.decode('utf-8') #return the hashed password as a string, decode the bytes back to string using utf-8 encoding
+
+
+def get_current_user(token: bytes): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
+
+    jwt_dict = jwt.decode(token, 
+                          key=SECRET_KEY, 
+                          algorithms=ALGORITHM) #Decond the Toekn using the stated Algorithm
+    
+
+    user_id = jwt_dict.get("sub")
+
+    if user_id == None:
+        return None
+
+    db = SessionLocal()
+
+    user = db.query(models.User).filter(models.User.user_id == int(user_id)).first()
+ 
+    db.close
+
+    return user
