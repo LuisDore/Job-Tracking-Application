@@ -5,7 +5,8 @@ import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
 import os
-
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import Depends
 
 #Application :
 #Application ID (Integer)
@@ -28,11 +29,43 @@ ALGORITHM = "HS256" #Symmetric Algorithm, uses the secret
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 #bearer_scheme = HTTPBearer()
 
+Base = models.Base #Creates the Base class for the SQLAlchemy models
+Base.metadata.create_all(bind=engine) #Creates the database tables based on the models defined in models.py
 
 app = FastAPI.FastAPI() #Creates the FastAPI application instance
 
-Base = models.Base #Creates the Base class for the SQLAlchemy models
-Base.metadata.create_all(bind=engine) #Creates the database tables based on the models defined in models.py
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/Login")
+
+
+def get_current_user(token: str = Depends(oauth2_scheme)): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
+
+    #Function Flow:
+    #JWT -> Verify JWT -> Extract User_ID -> Find User in DB with ID -> Return User if possible
+
+    try:
+        jwt_dict = jwt.decode(token,  #jwt.decode checks the validty of the token and returns differnt errors depening on the outcome
+                              key=SECRET_KEY, 
+                              algorithms=[ALGORITHM]) #Decond the Toekn using the stated Algorithm
+    except jwt.ExpiredSignatureError: #If the Token has expired 
+        print("Token has expired")
+        return None
+    except jwt.InvalidTokenError: #Token is otherwise Invalid, bad signature, malformed jwt, invalid claims.
+        print("Token is Invalid")
+        return None
+
+
+    user_id = jwt_dict.get("sub")
+
+    if user_id is None: #If the JWT doesnt contain a User_ID
+        return None
+
+    db = SessionLocal()  
+    user = db.query(models.User).filter(models.User.user_id == int(user_id)).first() #Find user with the ID within the JWT from the db
+    db.close()    
+
+    return user
+
+
 
 
 #User Authentication Endpoints
@@ -53,7 +86,11 @@ def register_user(new_username: str, new_email: str, password: str):
     db.close()
 
 @app.post("/auth/Login") #Login endpoint
-def login_user(email: str, password: str):
+def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
+
+    email = form_data.username #OAuth2 calls the credential username.
+    password = form_data.password
+
 
     db = SessionLocal()
     user = db.query(models.User).filter(models.User.email == email).first()
@@ -66,7 +103,7 @@ def login_user(email: str, password: str):
        return {"message": "Invalid email or password"}
 
        
-    #TODO Create JWT Token
+    
     #The JWT Token consists of HEADER.PAYLOAD.SIGNATURE
     expire = datetime.now() + timedelta(minutes= ACCESS_TOKEN_EXPIRE_MINUTES) #Creates the DateTime Variable 30 Minutes from the Current Time (BST/GMT)
 
@@ -81,9 +118,8 @@ def login_user(email: str, password: str):
     
        
     return  {
-            "access token": encoded_jwt,
-            "token_type": "bearer",
-            "message": "Login successful"}
+            "access_token": encoded_jwt,
+            "token_type": "bearer"}
 
   
 
@@ -102,13 +138,13 @@ def read_root():
     return {"message": "Root endpoint"}
 
 @app.get("/applications") #Gets all applications
-def read_applications():
+def read_applications(current_user = Depends(get_current_user)):
 
-    if logged_in_user is None: #If the user is not logged in, return an error message
+    if current_user is None: #If the user is not logged in, return an error message
         return {"message": "User not logged in. Please log in to view applications."}
 
     db = SessionLocal()
-    applications = db.query(models.Application).filter(models.Application.user_id == logged_in_user.user_id).all()
+    applications = db.query(models.Application).filter(models.Application.user_id == current_user.user_id).all()
     db.close()
     return applications
 
@@ -120,15 +156,16 @@ def create_application(title: str,
                         status: models.StatusEnum,
                         date_applied: str, 
                         notes: str,
-                        job_url: str):
+                        job_url: str,
+                        current_user = Depends(get_current_user)):
     
-    if logged_in_user is None: #If the user is not logged in, return an error message
+    if current_user is None: #If the user is not logged in, return an error message
         return {"message": "User not logged in. Please log in to create applications."}
 
 
     db = SessionLocal()
     new_application = models.Application(
-        application_id= db.query(models.Application).count() + 1,  # Auto-incrementing application_id
+        application_id= db.query(models.Application).count() + 1,  # Auto-incrementing application_id #TODO Should i have each users Aplication ID starting from zero or just used based of the total ?
         job_title= title,
         company_name= company,
         location= location,
@@ -137,7 +174,7 @@ def create_application(title: str,
         date_applied= date_applied,
         notes= notes,
         job_url= job_url,
-        user_id= logged_in_user.user_id  # Use the logged-in user's ID
+        user_id= current_user.user_id  # Use the logged-in user's ID
 
     )
     db.add(new_application)
@@ -150,17 +187,15 @@ def create_application(title: str,
     "application_id": new_application.application_id
     }
 
-
-
 @app.get("/applications/{application_id}") #Gets a specific application by ID
-def read_application(application_id: int):
+def read_application(application_id: int, current_user = Depends(get_current_user)):
 
-    if logged_in_user is None: #If the user is not logged in, return an error message
+    if current_user is None: #If the user is not logged in, return an error message
         return {"message": "User not logged in. Please log in to view an application."}
 
     db = SessionLocal()
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
-                                                      models.Application.user_id == logged_in_user.user_id).first()
+                                                      models.Application.user_id == current_user.user_id).first()
     db.close()
 
     return application
@@ -174,14 +209,15 @@ def update_application(application_id: int,
                        status: models.StatusEnum = None,
                        date_applied: str = None, 
                        notes: str = None,
-                       job_url: str = None):    
+                       job_url: str = None,
+                       current_user = Depends(get_current_user)):    
     
-    if logged_in_user is None: #If the user is not logged in, return an error message
+    if current_user is None: #If the user is not logged in, return an error message
         return {"message": "User not logged in. Please log in to update an application."}
 
     db = SessionLocal()
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
-                                                      models.Application.user_id == logged_in_user.user_id).first()
+                                                      models.Application.user_id == current_user.user_id).first()
     
     if application:        
 
@@ -210,14 +246,14 @@ def update_application(application_id: int,
         return {"message": f"Application with ID {application_id} not found."}
 
 @app.delete("/applications/{application_id}") #Deletes a specific application by ID
-def delete_application(application_id: int):
+def delete_application(application_id: int, current_user = Depends(get_current_user)):
 
-    if logged_in_user is None: #If the user is not logged in, return an error message
+    if current_user is None: #If the user is not logged in, return an error message
         return {"message": "User not logged in. Please log in to delete an application."}
 
     db = SessionLocal()
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
-                                                      models.Application.user_id == logged_in_user.user_id).first()
+                                                      models.Application.user_id == current_user.user_id).first()
     
     if application:
         db.delete(application)
@@ -240,30 +276,3 @@ def Hash(password : str): #Using BCrypt to hash the password, One way hashing
     return hashed_password.decode('utf-8') #return the hashed password as a string, decode the bytes back to string using utf-8 encoding
 
 
-def get_current_user(token: bytes): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
-
-    #Function Flow:
-    #JWT -> Verify JWT -> Extract User_ID -> Find User in DB with ID -> Return User if possible
-
-    try:
-        jwt_dict = jwt.decode(token,  #jwt.decode checks the validty of the token and returns differnt errors depening on the outcome
-                              key=SECRET_KEY, 
-                              algorithms=ALGORITHM) #Decond the Toekn using the stated Algorithm
-    except jwt.ExpiredSignatureError: #If the Token has expired 
-        print("Token has expired")
-        return None
-    except jwt.InvalidTokenError: #Token is otherwise Invalid, bad signature, malformed jwt, invalid claims.
-        print("Token is Invalid")
-        return None
-
-
-    user_id = jwt_dict.get("sub")
-
-    if user_id is None: #If the JWT doesnt contain a User_ID
-        return None
-
-    db = SessionLocal()  
-    user = db.query(models.User).filter(models.User.user_id == int(user_id)).first() #Find user with the ID within the JWT from the db
-    db.close()    
-
-    return user
