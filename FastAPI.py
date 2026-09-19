@@ -34,11 +34,12 @@ app = FastAPI.FastAPI() #Creates the FastAPI application instance
 Base = models.Base #Creates the Base class for the SQLAlchemy models
 Base.metadata.create_all(bind=engine) #Creates the database tables based on the models defined in models.py
 
+
 #User Authentication Endpoints
 @app.post("/auth/Register") #Register endpoint
 def register_user(new_username: str, new_email: str, password: str):
-    db = SessionLocal()
 
+    db = SessionLocal()
     new_user = models.User(
         user_id = db.query(models.User).count() + 1, #Auto Incrementing User ID 
         username = new_username,
@@ -53,36 +54,38 @@ def register_user(new_username: str, new_email: str, password: str):
 
 @app.post("/auth/Login") #Login endpoint
 def login_user(email: str, password: str):
+
     db = SessionLocal()
     user = db.query(models.User).filter(models.User.email == email).first()
     db.close()
+
     #No salt is needed for bcrypt because the salt is automatically generated and stored as part 
     #of the hashed password. When you verify a password, bcrypt extracts the salt from the stored hash and uses it to hash the provided password for comparison.
-    if user and bcrypt.checkpw(password.encode('utf-8'), user.hashed_password.encode('utf-8')): #If the user exists and the password matches the hashed password in the database
-       
-        #TODO Create JWT Token
-        #The JWT Token consists of HEADER.PAYLOAD.SIGNATURE
-        expire = datetime.now + timedelta(minutes= ACCESS_TOKEN_EXPIRE_MINUTES) #Creates the DateTime Variable 30 Minutes from the Current Time (BST/GMT)
+    
+    if user is None or not bcrypt.checkpw(password.encode('utf-8'), user.hashed_password.encode('utf-8')): #If the user doesnt exist or the passwords dont match 
+       return {"message": "Invalid email or password"}
 
-        jwt_payload = {
-            "sub": str(user.user_id),
-            "exp": expire            
+       
+    #TODO Create JWT Token
+    #The JWT Token consists of HEADER.PAYLOAD.SIGNATURE
+    expire = datetime.now() + timedelta(minutes= ACCESS_TOKEN_EXPIRE_MINUTES) #Creates the DateTime Variable 30 Minutes from the Current Time (BST/GMT)
+
+    jwt_payload = {
+        "sub": str(user.user_id),
+        "exp": expire            
         }
         
-        encoded_jwt = jwt.encode(payload=jwt_payload, 
-                                 key=SECRET_KEY, 
-                                 algorithm=ALGORITHM) 
-
-
-
-
-        #TODO Return JWT Token
-        #TODO Create get_current_user() Function
-
+    encoded_jwt = jwt.encode(payload=jwt_payload, 
+                                key=SECRET_KEY, 
+                                algorithm=ALGORITHM) 
+    
        
-        return encoded_jwt and {"message": "Login successful"}
-    else:
-        return {"message": "Invalid email or password"}
+    return  {
+            "access token": encoded_jwt,
+            "token_type": "bearer",
+            "message": "Login successful"}
+
+  
 
 @app.post("/auth/Logout") #Logout endpoint
 def logout_user():
@@ -239,20 +242,28 @@ def Hash(password : str): #Using BCrypt to hash the password, One way hashing
 
 def get_current_user(token: bytes): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
 
-    jwt_dict = jwt.decode(token, 
-                          key=SECRET_KEY, 
-                          algorithms=ALGORITHM) #Decond the Toekn using the stated Algorithm
-    
+    #Function Flow:
+    #JWT -> Verify JWT -> Extract User_ID -> Find User in DB with ID -> Return User if possible
+
+    try:
+        jwt_dict = jwt.decode(token,  #jwt.decode checks the validty of the token and returns differnt errors depening on the outcome
+                              key=SECRET_KEY, 
+                              algorithms=ALGORITHM) #Decond the Toekn using the stated Algorithm
+    except jwt.ExpiredSignatureError: #If the Token has expired 
+        print("Token has expired")
+        return None
+    except jwt.InvalidTokenError: #Token is otherwise Invalid, bad signature, malformed jwt, invalid claims.
+        print("Token is Invalid")
+        return None
+
 
     user_id = jwt_dict.get("sub")
 
-    if user_id == None:
+    if user_id is None: #If the JWT doesnt contain a User_ID
         return None
 
-    db = SessionLocal()
-
-    user = db.query(models.User).filter(models.User.user_id == int(user_id)).first()
- 
-    db.close
+    db = SessionLocal()  
+    user = db.query(models.User).filter(models.User.user_id == int(user_id)).first() #Find user with the ID within the JWT from the db
+    db.close()    
 
     return user
