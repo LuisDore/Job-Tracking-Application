@@ -6,7 +6,7 @@ import jwt
 from datetime import datetime, timedelta, timezone
 import os
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 
 #Application :
 #Application ID (Integer)
@@ -18,6 +18,16 @@ from fastapi import Depends
 #Date Applied (Date)
 #Notes (String)
 #Job URL (String)
+
+
+#200 OK
+#201 Created
+#400 Bad Request
+#401 Unauthorized
+#403 Forbidden
+#404 Not Found
+#422 Unprocessable Entity
+#500 Internal Server Error
 
 #To run the server do the following in the terminal:
 #uvicorn FastAPI:app --reload
@@ -43,25 +53,44 @@ def get_current_user(token: str = Depends(oauth2_scheme)): # JWT -> Verify JWT -
     #JWT -> Verify JWT -> Extract User_ID -> Find User in DB with ID -> Return User if possible
 
     try:
-        jwt_dict = jwt.decode(token,  #jwt.decode checks the validty of the token and returns differnt errors depening on the outcome
-                              key=SECRET_KEY, 
-                              algorithms=[ALGORITHM]) #Decond the Toekn using the stated Algorithm
+        jwt_dict = jwt.decode(
+            token,  #jwt.decode checks the validty of the token and returns differnt errors depening on the outcome
+            key=SECRET_KEY, 
+            algorithms=[ALGORITHM]
+        ) #Decond the Toekn using the stated Algorithm
     except jwt.ExpiredSignatureError: #If the Token has expired 
-        print("Token has expired")
-        return None
+        raise HTTPException(
+            status_code=401,
+            detail="JWT Expired"
+        )  #When the HTTPException is raised it terminates any current functions running and wont run the rest of the code           
     except jwt.InvalidTokenError: #Token is otherwise Invalid, bad signature, malformed jwt, invalid claims.
-        print("Token is Invalid")
-        return None
-
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authentication Credentials"
+        )
 
     user_id = jwt_dict.get("sub")
 
-    if user_id is None: #If the JWT doesnt contain a User_ID
-        return None
+    try: 
+        user_id = int(user_id)
+    except(ValueError,TypeError):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Authentication Credentials"
+        )
 
     db = SessionLocal()  
-    user = db.query(models.User).filter(models.User.user_id == int(user_id)).first() #Find user with the ID within the JWT from the db
-    db.close()    
+
+    try:
+        user = db.query(models.User).filter(models.User.user_id == int(user_id)).first() #Find user with the ID within the JWT from the db
+    finally:
+        db.close()    
+
+    if user is None:
+        raise HTTPException(
+            status_code=401, 
+            detail="User Not Found In Data Base"
+        )
 
     return user
 
@@ -125,9 +154,7 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
 
 @app.post("/auth/Logout") #Logout endpoint
 def logout_user():
-    global logged_in_user
-    logged_in_user = None #Clear the logged in user
-    return {"message": "Logout successful"}
+    pass
 
 
 
@@ -138,10 +165,7 @@ def read_root():
     return {"message": "Root endpoint"}
 
 @app.get("/applications") #Gets all applications
-def read_applications(current_user = Depends(get_current_user)):
-
-    if current_user is None: #If the user is not logged in, return an error message
-        return {"message": "User not logged in. Please log in to view applications."}
+def read_applications(current_user = Depends(get_current_user)):  
 
     db = SessionLocal()
     applications = db.query(models.Application).filter(models.Application.user_id == current_user.user_id).all()
@@ -158,10 +182,6 @@ def create_application(title: str,
                         notes: str,
                         job_url: str,
                         current_user = Depends(get_current_user)):
-    
-    if current_user is None: #If the user is not logged in, return an error message
-        return {"message": "User not logged in. Please log in to create applications."}
-
 
     db = SessionLocal()
     new_application = models.Application(
@@ -190,13 +210,14 @@ def create_application(title: str,
 @app.get("/applications/{application_id}") #Gets a specific application by ID
 def read_application(application_id: int, current_user = Depends(get_current_user)):
 
-    if current_user is None: #If the user is not logged in, return an error message
-        return {"message": "User not logged in. Please log in to view an application."}
-
     db = SessionLocal()
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
                                                       models.Application.user_id == current_user.user_id).first()
     db.close()
+
+    if application is None:
+        raise HTTPException(status_code=404, 
+                            detail="Application not found")
 
     return application
 
@@ -211,58 +232,51 @@ def update_application(application_id: int,
                        notes: str = None,
                        job_url: str = None,
                        current_user = Depends(get_current_user)):    
-    
-    if current_user is None: #If the user is not logged in, return an error message
-        return {"message": "User not logged in. Please log in to update an application."}
 
     db = SessionLocal()
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
                                                       models.Application.user_id == current_user.user_id).first()
     
-    if application:        
+    if application is None:
+        raise HTTPException(status_code=404,
+                            detail="Application not found")      
 
-        to_update = {
-            "job_title": title,
-            "company_name": company,
-            "location": location,
-            "salary": salary,
-            "status": status,
-            "date_applied": date_applied,
-            "notes": notes,
-            "job_url": job_url
-        }
+    to_update = {
+        "job_title": title,
+        "company_name": company,
+        "location": location,
+        "salary": salary,
+        "status": status,
+        "date_applied": date_applied,
+        "notes": notes,
+        "job_url": job_url
+    }
 
-        for key, value in to_update.items():
-            if value is not None:
-                setattr(application, key, value)
+    for key, value in to_update.items():
+        if value is not None:
+            setattr(application, key, value)
 
-        db.commit()
-        db.refresh(application)
-        db.close()
-        return application
-
-    else:
-        db.close()
-        return {"message": f"Application with ID {application_id} not found."}
+    db.commit()
+    db.refresh(application)
+    db.close()
+    return application
+    
 
 @app.delete("/applications/{application_id}") #Deletes a specific application by ID
 def delete_application(application_id: int, current_user = Depends(get_current_user)):
 
-    if current_user is None: #If the user is not logged in, return an error message
-        return {"message": "User not logged in. Please log in to delete an application."}
-
     db = SessionLocal()
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
                                                       models.Application.user_id == current_user.user_id).first()
     
-    if application:
-        db.delete(application)
-        db.commit()
-        db.close()
-        return {"message": f"Application with ID {application_id} deleted successfully."}
-    else:
-        db.close()
-        return {"message": f"Application with ID {application_id} not found."}
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    
+    db.delete(application)
+    db.commit()
+    db.close()
+    return {"message": f"Application with ID {application_id} deleted successfully."}
+    
 
 
 #Buiseness Logic
