@@ -3,10 +3,11 @@ from DataBase import SessionLocal, engine
 import models
 import bcrypt
 import jwt
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, date
 import os
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi import Depends, HTTPException
+import schemas
 
 #Application :
 #Application ID (Integer)
@@ -26,6 +27,7 @@ from fastapi import Depends, HTTPException
 #401 Unauthorized
 #403 Forbidden
 #404 Not Found
+#409 Conflict
 #422 Unprocessable Entity
 #500 Internal Server Error
 
@@ -44,7 +46,7 @@ Base.metadata.create_all(bind=engine) #Creates the database tables based on the 
 
 app = FastAPI.FastAPI() #Creates the FastAPI application instance
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/Login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
@@ -98,15 +100,38 @@ def get_current_user(token: str = Depends(oauth2_scheme)): # JWT -> Verify JWT -
 
 
 #User Authentication Endpoints
-@app.post("/auth/Register") #Register endpoint
-def register_user(new_username: str, new_email: str, password: str):
+@app.post("/auth/register", response_model= schemas.UserResponse) #Register endpoint
+def register_user(user_data : schemas.UserCreate):
 
     db = SessionLocal()
-    new_user = models.User(
-        user_id = db.query(models.User).count() + 1, #Auto Incrementing User ID 
-        username = new_username,
-        email = new_email,
-        hashed_password = Hash(password), 
+
+    #Check If the Username / Email is already in use
+    
+    check1 = (
+        db.query(models.User)
+        .filter(models.User.email == user_data.email)
+        .first()
+        )
+    
+    check2 = (
+        db.query(models.User)
+        .filter(models.User.username == user_data.email)
+        .first()
+        )
+    
+    if check1 is not None or check2 is not None:
+        db.close()
+        raise HTTPException(
+            status_code=409,
+            detail="Email or Username is already in use"
+            )
+
+
+
+    new_user = models.User(        
+        username = user_data.username,
+        email = user_data.email,
+        hashed_password = Hash(user_data.password), 
     )
 
     db.add(new_user)
@@ -114,7 +139,9 @@ def register_user(new_username: str, new_email: str, password: str):
     db.refresh(new_user)
     db.close()
 
-@app.post("/auth/Login") #Login endpoint
+    return new_user
+
+@app.post("/auth/login") #Login endpoint
 def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
 
     email = form_data.username #OAuth2 calls the credential username.
@@ -129,8 +156,10 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
     #of the hashed password. When you verify a password, bcrypt extracts the salt from the stored hash and uses it to hash the provided password for comparison.
     
     if user is None or not bcrypt.checkpw(password.encode('utf-8'), user.hashed_password.encode('utf-8')): #If the user doesnt exist or the passwords dont match 
-       return {"message": "Invalid email or password"}
-
+       raise HTTPException(
+           status_code=401,
+           detail="Invalid Email or Password"
+       )
        
     
     #The JWT Token consists of HEADER.PAYLOAD.SIGNATURE
@@ -164,7 +193,9 @@ def logout_user():
 def read_root():
     return {"message": "Root endpoint"}
 
-@app.get("/applications") #Gets all applications
+@app.get("/applications",
+        response_model=list[schemas.ApplicationResponse]
+        ) #Gets all applications
 def read_applications(current_user = Depends(get_current_user)):  
 
     db = SessionLocal()
@@ -172,28 +203,21 @@ def read_applications(current_user = Depends(get_current_user)):
     db.close()
     return applications
 
-@app.post("/applications") #Creates a new application   
-def create_application(title: str, 
-                        company: str,
-                        location: str,
-                        salary: str,
-                        status: models.StatusEnum,
-                        date_applied: str, 
-                        notes: str,
-                        job_url: str,
+@app.post("/applications",
+        response_model= schemas.ApplicationResponse) #Creates a new application   
+def create_application(application : schemas.ApplicationCreate,
                         current_user = Depends(get_current_user)):
 
     db = SessionLocal()
-    new_application = models.Application(
-        application_id= db.query(models.Application).count() + 1,  # Auto-incrementing application_id #TODO Should i have each users Aplication ID starting from zero or just used based of the total ?
-        job_title= title,
-        company_name= company,
-        location= location,
-        salary= salary,
-        status= status,
-        date_applied= date_applied,
-        notes= notes,
-        job_url= job_url,
+    new_application = models.Application(        
+        job_title= application.job_title,
+        company_name= application.company_name,
+        location= application.location,
+        salary= application.salary,
+        status= application.status,
+        date_applied= application.date_applied,
+        notes= application.notes,
+        job_url= application.job_url,
         user_id= current_user.user_id  # Use the logged-in user's ID
 
     )
@@ -202,12 +226,11 @@ def create_application(title: str,
     db.refresh(new_application)
     db.close()
 
-    return {
-    "message": "Application created successfully.",
-    "application_id": new_application.application_id
-    }
+    return new_application
+    
 
-@app.get("/applications/{application_id}") #Gets a specific application by ID
+@app.get("/applications/{application_id}",
+        response_model=schemas.ApplicationResponse) #Gets a specific application by ID
 def read_application(application_id: int, current_user = Depends(get_current_user)):
 
     db = SessionLocal()
@@ -221,45 +244,39 @@ def read_application(application_id: int, current_user = Depends(get_current_use
 
     return application
 
-@app.put("/applications/{application_id}") #Updates a specific application by ID
-def update_application(application_id: int, 
-                       title: str = None, 
-                       company: str = None,
-                       location: str = None,
-                       salary: str = None,
-                       status: models.StatusEnum = None,
-                       date_applied: str = None, 
-                       notes: str = None,
-                       job_url: str = None,
+@app.put("/applications/{application_id}",
+        response_model=schemas.ApplicationResponse) #Updates a specific application by ID
+def update_application(application_id: int,
+                       update_data : schemas.ApplicationUpdate,
                        current_user = Depends(get_current_user)):    
 
     db = SessionLocal()
-    application = db.query(models.Application).filter(models.Application.application_id == application_id, 
+    db_application = db.query(models.Application).filter(models.Application.application_id == application_id, 
                                                       models.Application.user_id == current_user.user_id).first()
     
-    if application is None:
+    if db_application is None:
         raise HTTPException(status_code=404,
                             detail="Application not found")      
 
     to_update = {
-        "job_title": title,
-        "company_name": company,
-        "location": location,
-        "salary": salary,
-        "status": status,
-        "date_applied": date_applied,
-        "notes": notes,
-        "job_url": job_url
+        "job_title": update_data.job_title,
+        "company_name": update_data.company_name,
+        "location": update_data.location,
+        "salary": update_data.salary,
+        "status": update_data.status,
+        "date_applied": update_data.date_applied,
+        "notes": update_data.notes,
+        "job_url": update_data.job_url
     }
 
     for key, value in to_update.items():
         if value is not None:
-            setattr(application, key, value)
+            setattr(db_application, key, value)
 
     db.commit()
-    db.refresh(application)
+    db.refresh(db_application)
     db.close()
-    return application
+    return db_application
     
 
 @app.delete("/applications/{application_id}") #Deletes a specific application by ID
