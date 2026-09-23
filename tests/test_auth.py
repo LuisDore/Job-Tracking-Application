@@ -15,7 +15,7 @@ def test_root():
     }
 
 def test_registration():
-    response = client.get("")
+    response = client.post("")
 
 def test_duplicate_email():
     pass
@@ -33,4 +33,7 @@ def test_invalid_jwt():
     pass
 
 def test_expired_jwt():
+    pass
+
+def test_application_requires_authentication():
     pass

@@ -3,7 +3,7 @@ from DataBase import SessionLocal, engine
 import models
 import bcrypt
 import jwt
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 import os
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi import Depends, HTTPException
@@ -34,22 +34,31 @@ import schemas
 #To run the server do the following in the terminal:
 #uvicorn FastAPI:app --reload
 
-#TODO Look into JWT Authentication instead of a global variable 
+#TODO Database setup handled seperatly when i move to postGre
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-this-development-secret")
 ALGORITHM = "HS256" #Symmetric Algorithm, uses the secret
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 #bearer_scheme = HTTPBearer()
 
-Base = models.Base #Creates the Base class for the SQLAlchemy models
-Base.metadata.create_all(bind=engine) #Creates the database tables based on the models defined in models.py
+
+models.Base.metadata.create_all(bind=engine) #Creates the database tables based on the models defined in models.py
 
 app = FastAPI.FastAPI() #Creates the FastAPI application instance
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
+def get_db():
+    db = SessionLocal()
+    try: 
+        yield db
+    finally:
+        db.close()
+
+
+def get_current_user(token: str = Depends(oauth2_scheme),
+                    db = Depends(get_db)): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
 
     #Function Flow:
     #JWT -> Verify JWT -> Extract User_ID -> Find User in DB with ID -> Return User if possible
@@ -80,13 +89,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)): # JWT -> Verify JWT -
             status_code=401,
             detail="Invalid Authentication Credentials"
         )
-
-    db = SessionLocal()  
-
-    try:
-        user = db.query(models.User).filter(models.User.user_id == int(user_id)).first() #Find user with the ID within the JWT from the db
-    finally:
-        db.close()    
+        
+    user = db.query(models.User).filter(models.User.user_id == int(user_id)).first() #Find user with the ID within the JWT from the db     
 
     if user is None:
         raise HTTPException(
@@ -98,13 +102,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)): # JWT -> Verify JWT -
 
 
 
-
 #User Authentication Endpoints
 @app.post("/auth/register", response_model= schemas.UserResponse) #Register endpoint
-def register_user(user_data : schemas.UserCreate):
-
-    db = SessionLocal()
-
+def register_user(user_data : schemas.UserCreate, db = Depends(get_db)):
     #Check If the Username / Email is already in use
     
     check1 = (
@@ -115,12 +115,12 @@ def register_user(user_data : schemas.UserCreate):
     
     check2 = (
         db.query(models.User)
-        .filter(models.User.username == user_data.email)
+        .filter(models.User.username == user_data.username)
         .first()
         )
     
     if check1 is not None or check2 is not None:
-        db.close()
+        
         raise HTTPException(
             status_code=409,
             detail="Email or Username is already in use"
@@ -131,26 +131,26 @@ def register_user(user_data : schemas.UserCreate):
     new_user = models.User(        
         username = user_data.username,
         email = user_data.email,
-        hashed_password = Hash(user_data.password), 
+        hashed_password = hash_password(user_data.password), 
     )
 
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    db.close()
+    
 
     return new_user
 
-@app.post("/auth/login") #Login endpoint
-def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
+@app.post("/auth/login", response_model= schemas.Token) #Login endpoint
+def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db = Depends(get_db)):
 
     email = form_data.username #OAuth2 calls the credential username.
     password = form_data.password
 
 
-    db = SessionLocal()
+    
     user = db.query(models.User).filter(models.User.email == email).first()
-    db.close()
+    
 
     #No salt is needed for bcrypt because the salt is automatically generated and stored as part 
     #of the hashed password. When you verify a password, bcrypt extracts the salt from the stored hash and uses it to hash the provided password for comparison.
@@ -163,7 +163,7 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
        
     
     #The JWT Token consists of HEADER.PAYLOAD.SIGNATURE
-    expire = datetime.now() + timedelta(minutes= ACCESS_TOKEN_EXPIRE_MINUTES) #Creates the DateTime Variable 30 Minutes from the Current Time (BST/GMT)
+    expire = datetime.now(timezone.utc) + timedelta(minutes= ACCESS_TOKEN_EXPIRE_MINUTES) #Creates the DateTime Variable 30 Minutes from the Current Time (BST/GMT)
 
     jwt_payload = {
         "sub": str(user.user_id),
@@ -179,14 +179,6 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
             "access_token": encoded_jwt,
             "token_type": "bearer"}
 
-  
-
-@app.post("/auth/Logout") #Logout endpoint
-def logout_user():
-    pass
-
-
-
 
 #CRUD Endpoints for Applications
 @app.get("/") #Root endpoint
@@ -196,19 +188,17 @@ def read_root():
 @app.get("/applications",
         response_model=list[schemas.ApplicationResponse]
         ) #Gets all applications
-def read_applications(current_user = Depends(get_current_user)):  
-
-    db = SessionLocal()
-    applications = db.query(models.Application).filter(models.Application.user_id == current_user.user_id).all()
-    db.close()
+def read_applications(current_user = Depends(get_current_user), db = Depends(get_db)):     
+    applications = db.query(models.Application).filter(models.Application.user_id == current_user.user_id).all()   
     return applications
 
 @app.post("/applications",
         response_model= schemas.ApplicationResponse) #Creates a new application   
 def create_application(application : schemas.ApplicationCreate,
-                        current_user = Depends(get_current_user)):
+                        current_user = Depends(get_current_user),
+                        db = Depends(get_db)):
 
-    db = SessionLocal()
+    
     new_application = models.Application(        
         job_title= application.job_title,
         company_name= application.company_name,
@@ -224,19 +214,21 @@ def create_application(application : schemas.ApplicationCreate,
     db.add(new_application)
     db.commit()
     db.refresh(new_application)
-    db.close()
+    
 
     return new_application
     
 
 @app.get("/applications/{application_id}",
         response_model=schemas.ApplicationResponse) #Gets a specific application by ID
-def read_application(application_id: int, current_user = Depends(get_current_user)):
+def read_application(application_id: int, 
+                    current_user = Depends(get_current_user),
+                    db = Depends(get_db)):
 
-    db = SessionLocal()
+    
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
                                                       models.Application.user_id == current_user.user_id).first()
-    db.close()
+    
 
     if application is None:
         raise HTTPException(status_code=404, 
@@ -248,9 +240,10 @@ def read_application(application_id: int, current_user = Depends(get_current_use
         response_model=schemas.ApplicationResponse) #Updates a specific application by ID
 def update_application(application_id: int,
                        update_data : schemas.ApplicationUpdate,
-                       current_user = Depends(get_current_user)):    
+                       current_user = Depends(get_current_user),
+                       db = Depends(get_db)):    
 
-    db = SessionLocal()
+   
     db_application = db.query(models.Application).filter(models.Application.application_id == application_id, 
                                                       models.Application.user_id == current_user.user_id).first()
     
@@ -275,14 +268,16 @@ def update_application(application_id: int,
 
     db.commit()
     db.refresh(db_application)
-    db.close()
+    
     return db_application
     
 
 @app.delete("/applications/{application_id}") #Deletes a specific application by ID
-def delete_application(application_id: int, current_user = Depends(get_current_user)):
+def delete_application(application_id: int, 
+                       current_user = Depends(get_current_user),
+                       db = Depends(get_db)):
 
-    db = SessionLocal()
+    
     application = db.query(models.Application).filter(models.Application.application_id == application_id, 
                                                       models.Application.user_id == current_user.user_id).first()
     
@@ -290,15 +285,14 @@ def delete_application(application_id: int, current_user = Depends(get_current_u
         raise HTTPException(status_code=404, detail="Application not found")
     
     db.delete(application)
-    db.commit()
-    db.close()
+    db.commit()   
     return {"message": f"Application with ID {application_id} deleted successfully."}
     
 
 
 #Buiseness Logic
 
-def Hash(password : str): #Using BCrypt to hash the password, One way hashing 
+def hash_password(password : str): #Using BCrypt to hash the password, One way hashing 
     #A Salt is a random data fed into a one way hashing function to ensure that the output (the hash) is unique even for identical inputs (passwords).
     #Cost is the number of rounds of hashing to apply, higher cost means more security but also more time to compute the hash.
     cost = 12 #Cost factor, higher means more secure but slower    
