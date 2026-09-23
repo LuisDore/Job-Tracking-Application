@@ -1,12 +1,11 @@
-from fastapi.testclient import TestClient
-from main import app
 
-client = TestClient(app)
-#TODO Set up Testing Database so the Main one isnt affected when running Tests
+
+from .conftest import client
+
 #TODO Write Tests for test_auth, test_applications, and conftest.py
 #conftest.py is for test Fixtures such as a test database, a test Client, a test user, an auth jwt,  an auth client, You can define the setup once in conftest.py
 
-def test_root():
+def test_root(client):
     response = client.get("/")
 
     assert response.status_code == 200
@@ -29,11 +28,12 @@ def test_login():
 def test_wrong_password():
     pass
 
+def test_no_jwt():
+    pass
+
 def test_invalid_jwt():
     pass
 
 def test_expired_jwt():
     pass
 
-def test_application_requires_authentication():
-    pass
