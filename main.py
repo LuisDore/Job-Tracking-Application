@@ -103,7 +103,7 @@ def get_current_user(token: str = Depends(oauth2_scheme),
 
 
 #User Authentication Endpoints
-@app.post("/auth/register", response_model= schemas.UserResponse) #Register endpoint
+@app.post("/auth/register", response_model= schemas.UserResponse, status_code=201) #Register endpoint
 def register_user(user_data : schemas.UserCreate, db = Depends(get_db)):
     #Check If the Username / Email is already in use
     
@@ -193,7 +193,8 @@ def read_applications(current_user = Depends(get_current_user), db = Depends(get
     return applications
 
 @app.post("/applications",
-        response_model= schemas.ApplicationResponse) #Creates a new application   
+        response_model= schemas.ApplicationResponse,
+        status_code=201) #Creates a new application   
 def create_application(application : schemas.ApplicationCreate,
                         current_user = Depends(get_current_user),
                         db = Depends(get_db)):
