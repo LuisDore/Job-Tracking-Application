@@ -48,14 +48,12 @@ app = FastAPI.FastAPI() #Creates the FastAPI application instance
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
-
 def get_db():
     db = SessionLocal()
     try: 
         yield db
     finally:
         db.close()
-
 
 def get_current_user(token: str = Depends(oauth2_scheme),
                     db = Depends(get_db)): # JWT -> Verify JWT -> Extract User ID -> Find User in DB -> Return User 
@@ -99,8 +97,6 @@ def get_current_user(token: str = Depends(oauth2_scheme),
         )
 
     return user
-
-
 
 #User Authentication Endpoints
 @app.post("/auth/register", response_model= schemas.UserResponse, status_code=201) #Register endpoint
@@ -179,7 +175,6 @@ def login_user(form_data: OAuth2PasswordRequestForm = Depends(), db = Depends(ge
             "access_token": encoded_jwt,
             "token_type": "bearer"}
 
-
 #CRUD Endpoints for Applications
 @app.get("/") #Root endpoint
 def read_root():
@@ -201,8 +196,8 @@ def create_application(application : schemas.ApplicationCreate,
 
     
     new_application = models.Application(        
-        job_title= application.job_title,
         company_name= application.company_name,
+        job_title= application.job_title,        
         location= application.location,
         salary= application.salary,
         status= application.status,
@@ -219,7 +214,6 @@ def create_application(application : schemas.ApplicationCreate,
 
     return new_application
     
-
 @app.get("/applications/{application_id}",
         response_model=schemas.ApplicationResponse) #Gets a specific application by ID
 def read_application(application_id: int, 
@@ -272,7 +266,6 @@ def update_application(application_id: int,
     
     return db_application
     
-
 @app.delete("/applications/{application_id}") #Deletes a specific application by ID
 def delete_application(application_id: int, 
                        current_user = Depends(get_current_user),

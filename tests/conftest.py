@@ -71,3 +71,47 @@ def user_test():
 def register_user(client, user_test):
     response = client.post("/auth/register", json=user_test)
     return response, user_test
+
+
+
+@pytest.fixture(scope="function")
+def login_user(client, register_user): 
+    registration_response, user = register_user
+    login_response = client.post("/auth/login", #Oauth2 from calls the field "username" not "email"
+                               data = {"username" : user["email"], #Called Data as OAuth2PasswordRequestFrom Expects form-encoded Data not JSON
+                                       "password" : user["password"]})
+
+    return registration_response, login_response, user
+
+@pytest.fixture(scope="function")
+def application_test():
+    return {
+        "company_name" : "test_company_name",
+        "job_title" : "test_title",        
+        "location" : "test_location",
+        "salary" : "test_salary",
+        "status" : "Applied",
+        "date_applied" : "2026-09-25", #ISO 8601 International date format: YYYY-MM-DD
+        "notes" : "test_notes",
+        "job_url" : "test_url"
+    }
+
+@pytest.fixture(scope="function")
+def created_application(client, login_user, application_test):
+    regristration_response , login_response, user = login_user
+
+    assert regristration_response.status_code == 201
+    assert login_response.status_code == 200
+
+    token = login_response.json()["access_token"]
+
+    response = client.post("/applications", 
+                           json=application_test,
+                            headers={
+                                "Authorization" : f"Bearer {token}"
+                            } 
+                            )
+    
+    assert response.status_code == 201 #Created Status Code
+
+    return response, token
