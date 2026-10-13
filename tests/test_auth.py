@@ -1,7 +1,7 @@
 from .conftest import client
 import jwt
 from datetime import datetime, timedelta, timezone
-from main import SECRET_KEY, ALGORITHM
+from app.config import SECRET_KEY, ALGORITHM
 #conftest.py is for test Fixtures such as a test database, a test Client, a test user, an auth jwt,  an auth client
 
 ###### Testing Regristration and Login Endpoints ######

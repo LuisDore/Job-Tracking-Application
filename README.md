@@ -30,17 +30,24 @@ Built with **FastAPI**, **SQLAlchemy** and **SQLite**, with JWT-based authentica
 
 ```
 .
-├── main.py            # FastAPI app, auth logic and all endpoints
-├── models.py          # SQLAlchemy models (User, Application)
-├── schemas.py         # Pydantic request/response schemas
-├── enums.py           # StatusEnum for application status
-├── DataBase.py        # Engine, session factory and Base
-├── requirements.txt
-└── tests/
-    ├── conftest.py    # Fixtures: test DB, client, users, applications
-    ├── test_auth.py
-    ├── test_applications.py
-    └── DataBase_test.py
+├── app/
+│   ├── main.py            # Creates the FastAPI app and includes the routers
+│   ├── config.py          # Settings: secret key, algorithm, token expiry, DB URL
+│   ├── database.py        # Engine, session factory, Base and get_db
+│   ├── models.py          # SQLAlchemy models (User, Application)
+│   ├── schemas.py         # Pydantic request/response schemas
+│   ├── enums.py           # StatusEnum for application status
+│   ├── security.py        # Password hashing and JWT creation
+│   ├── dependencies.py    # get_current_user (JWT -> User)
+│   └── routers/
+│       ├── auth.py        # /auth/register, /auth/login
+│       └── applications.py  # /applications CRUD
+├── tests/
+│   ├── conftest.py        # Fixtures: test DB, client, users, applications
+│   ├── test_auth.py
+│   └── test_applications.py
+├── .env.example
+└── requirements.txt
 ```
 
 ## Getting Started
@@ -81,7 +88,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 ### Run the server
 
 ```bash
-uvicorn main:app --reload
+uvicorn app.main:app --reload
 ```
 
 The API is now available at <http://127.0.0.1:8000>. The SQLite database (`Applications.db`) and its tables are created automatically on first start.

@@ -1,7 +1,7 @@
 
 from sqlalchemy import Column, Enum as SQLAlchemyEnum, ForeignKey, Integer, String, Date
-from DataBase import Base
-from enums import StatusEnum
+from app.database import Base
+from app.enums import StatusEnum
 
 
 #Application :
