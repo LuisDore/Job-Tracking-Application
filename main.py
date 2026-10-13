@@ -5,6 +5,7 @@ import bcrypt
 import jwt
 from datetime import datetime, timedelta, date, timezone
 import os
+from dotenv import load_dotenv
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi import Depends, HTTPException
 import schemas
@@ -36,7 +37,9 @@ import schemas
 
 #TODO Database setup handled seperatly when i move to postGre
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-this-development-secret")
+load_dotenv() #Loads variables from the .env file (git ignored) into the environment
+
+SECRET_KEY = os.environ["JWT_SECRET_KEY"] #No fallback, the app refuses to start without a real key
 ALGORITHM = "HS256" #Symmetric Algorithm, uses the secret
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 #bearer_scheme = HTTPBearer()
