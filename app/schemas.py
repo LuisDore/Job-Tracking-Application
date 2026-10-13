@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import date
-from enums import StatusEnum
+from app.enums import StatusEnum
 
 #USER SCHEMAS
 
@@ -19,6 +19,11 @@ class UserResponse(BaseModel):
     user_id: int
     username: str
     email : EmailStr
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
 
 #APPLICATION SCHEMAS
 
