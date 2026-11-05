@@ -68,20 +68,18 @@ def update_application(application_id: int,
         raise HTTPException(status_code=404,
                             detail="Application not found")
 
-    to_update = {
-        "job_title": update_data.job_title,
-        "company_name": update_data.company_name,
-        "location": update_data.location,
-        "salary": update_data.salary,
-        "status": update_data.status,
-        "date_applied": update_data.date_applied,
-        "notes": update_data.notes,
-        "job_url": update_data.job_url
-    }
+    #exclude_unset keeps only fields the client actually sent, so an explicit null is preserved
+    to_update = update_data.model_dump(exclude_unset=True)
+
+    #These columns are nullable=False in the model, so they can't be cleared
+    required_fields = {"job_title", "company_name", "status"}
+    for field in required_fields:
+        if field in to_update and to_update[field] is None:
+            raise HTTPException(status_code=422,
+                                detail=f"{field} cannot be null")
 
     for key, value in to_update.items():
-        if value is not None:
-            setattr(db_application, key, value)
+        setattr(db_application, key, value)
 
     db.commit()
     db.refresh(db_application)
@@ -91,7 +89,8 @@ def update_application(application_id: int,
 @router.delete("/{application_id}") #Deletes a specific application by ID
 def delete_application(application_id: int,
                        current_user = Depends(get_current_user),
-                       db = Depends(get_db)):
+                       db = Depends(get_db),
+                       status_code=204):
 
     application = db.query(models.Application).filter(models.Application.application_id == application_id,
                                                       models.Application.user_id == current_user.user_id).first()
